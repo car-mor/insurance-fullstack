@@ -1,6 +1,6 @@
 # 🛡️ OpenPolicy - Core Insurance System
 
-> Un sistema de gestión de pólizas de seguros simplificado, inspirado en la lógica de negocio de **Guidewire PolicyCenter**.
+> Un sistema de gestión de pólizas de seguros simplificado.
 
 ![Status](https://img.shields.io/badge/STATUS-EN_DESARROLLO-orange?style=for-the-badge)
 ![Java](https://img.shields.io/badge/Java-17%2B-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
