@@ -1,191 +1,175 @@
 import { useEffect, useState } from "react";
 
 function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [credentials, setCredentials] = useState({ username: "", password: "" });
+  const [loginError, setLoginError] = useState(false);
+
   const [policies, setPolicies] = useState([]);
-  
-  // Estado para el formulario
   const [formData, setFormData] = useState({
-    policyNumber: "",
-    holderName: "",
-    premiumAmount: "",
-    startDate: "",
-    status: "ACTIVE" // Valor por defecto
+    policyNumber: "", holderName: "", premiumAmount: "", startDate: ""
   });
+  const [formErrors, setFormErrors] = useState({});
 
-  // Estado para guardar los errores de validación que vengan del servidor
-  const [errors, setErrors] = useState({});
+//   btoa(...): No es encriptación real (se puede revertir fácil), pero es el estándar para que los caracteres especiales (:, /, @) no rompan la transmisión por internet.
 
+// Authorization: Basic ...: Es la palabra clave que Spring Security busca. Si llega una petición sin esto, responde "401 Unauthorized" (No estás autorizado).
+
+// Tomamos usuario y contraseña y los "envolvemos" en Base64 para que viajen seguros por el cable.
+  // Generar Header de Autenticación
+  const getAuthHeader = () => {
+    return "Basic " + btoa(`${credentials.username}:${credentials.password}`);
+  };
+
+  // --- SOLUCIÓN ERROR LINT ---
+  // Definimos fetchPolicies para poder reusarlo
   const fetchPolicies = () => {
-    fetch("http://localhost:8081/api/policies")
-      .then((response) => response.json())
+    fetch("http://localhost:8081/api/policies", {
+      // Muestra credenciales al pedir (Fetch)
+      headers: { "Authorization": getAuthHeader() }
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Error cargando datos");
+        return res.json();
+      })
       .then((data) => setPolicies(data))
-      .catch((error) => console.error("Error:", error));
+      .catch(err => console.error(err));
   };
 
-  // 2. LUEGO la usas en el useEffect
+  // USAMOS useEffect PARA LLAMARLO AUTOMÁTICAMENTE CUANDO HAYA LOGIN
+  // Esto elimina el error "fetchPolicies is assigned but never used"
   useEffect(() => {
-    fetchPolicies();
-  }, []);
+    if (isLoggedIn) {
+      fetchPolicies();
+    }
+  }, [isLoggedIn]); // Se ejecuta cada vez que 'isLoggedIn' cambia
 
-  // Cargar pólizas al inicio
-  useEffect(() => {
-    fetchPolicies();
-  }, []);
 
-  // Manejar cambios en los inputs del formulario
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-  };
-
-  // Enviar el formulario (POST)
-  const handleSubmit = (e) => {
+  // Manejo de Login
+  const handleLogin = (e) => {
     e.preventDefault();
-    
-    // Limpiamos errores previos
-    setErrors({});
+    // Probamos credenciales haciendo un fetch simple
+    fetch("http://localhost:8081/api/policies", {
+      headers: { "Authorization": getAuthHeader() }
+    })
+    .then(response => {
+      if (response.ok) {
+        setIsLoggedIn(true);
+        setLoginError(false);
+        // Nota: Ya no necesitamos llamar fetchPolicies() aquí manualmente
+        // porque el useEffect de arriba lo hará solito al cambiar isLoggedIn a true.
+      } else {
+        throw new Error("Credenciales inválidas");
+      }
+    })
+    .catch(() => setLoginError(true));
+  };
+
+  const handleCreate = (e) => {
+    e.preventDefault();
+    setFormErrors({});
 
     fetch("http://localhost:8081/api/policies", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Authorization": getAuthHeader()
       },
       body: JSON.stringify(formData),
     })
       .then(async (response) => {
-        if (response.ok) {
-          return response.json();
+        if (response.ok) return response.json();
+        const errorData = await response.json();
+        throw errorData; 
+      })
+      .then(() => {
+        // Recargamos la lista completa usando la función reutilizable
+        fetchPolicies();
+        alert("¡Creada con éxito!");
+        setFormData({ policyNumber: "", holderName: "", premiumAmount: "", startDate: "" });
+      })
+      .catch((err) => {
+        console.error(err);
+        if(err.policyNumber || err.holderName) {
+            setFormErrors(err);
         } else {
-          // Si falla (ej. error 400), leemos el JSON de errores
-          const errorData = await response.json();
-          throw errorData; 
+            alert("Error al guardar");
         }
-      })
-      .then((newPolicy) => {
-        // ÉXITO: Agregamos la nueva póliza a la lista visualmente
-        setPolicies([...policies, newPolicy]);
-        // Limpiamos el formulario
-        setFormData({
-          policyNumber: "",
-          holderName: "",
-          premiumAmount: "",
-          startDate: "",
-          status: "ACTIVE"
-        });
-        alert("¡Póliza creada con éxito!");
-      })
-      .catch((errorMap) => {
-        // ERROR: Guardamos los errores para mostrarlos en rojo
-        console.error("Errores de validación:", errorMap);
-        setErrors(errorMap);
       });
   };
 
+  const handleLoginChange = (e) => setCredentials({...credentials, [e.target.name]: e.target.value});
+  const handleFormChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  if (!isLoggedIn) {
+    return (
+      <div className="container mt-5 d-flex justify-content-center">
+        <div className="card shadow p-4" style={{ width: "400px" }}>
+          <h2 className="text-center text-primary mb-4">Iniciar Sesión</h2>
+          <form onSubmit={handleLogin}>
+            <div className="mb-3">
+              <label>Usuario</label>
+              <input type="text" name="username" className="form-control" onChange={handleLoginChange} placeholder="admin"/>
+            </div>
+            <div className="mb-3">
+              <label>Contraseña</label>
+              <input type="password" name="password" className="form-control" onChange={handleLoginChange} placeholder="admin123"/>
+            </div>
+            {loginError && <div className="alert alert-danger">Usuario o contraseña incorrectos</div>}
+            <button className="btn btn-primary w-100">Entrar</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container mt-5">
-      <h1 className="text-center text-primary mb-4">OpenPolicy Dashboard</h1>
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h1 className="text-primary">OpenPolicy Dashboard</h1>
+        <button onClick={() => setIsLoggedIn(false)} className="btn btn-outline-danger">Salir</button>
+      </div>
 
-      {/* --- FORMULARIO DE CREACIÓN --- */}
       <div className="card shadow mb-4">
         <div className="card-header bg-primary text-white">Nueva Póliza</div>
         <div className="card-body">
-          <form onSubmit={handleSubmit} className="row g-3">
-            
-            <div className="col-md-3">
-              <label className="form-label">Número de Póliza</label>
-              <input 
-                type="text" 
-                name="policyNumber"
-                className={`form-control ${errors.policyNumber ? 'is-invalid' : ''}`} 
-                placeholder="Ej. POL-1234"
-                value={formData.policyNumber}
-                onChange={handleChange}
-              />
-              <div className="invalid-feedback">{errors.policyNumber}</div>
-            </div>
-
-            <div className="col-md-3">
-              <label className="form-label">Titular</label>
-              <input 
-                type="text" 
-                name="holderName"
-                className={`form-control ${errors.holderName ? 'is-invalid' : ''}`}
-                placeholder="Nombre completo"
-                value={formData.holderName}
-                onChange={handleChange}
-              />
-              <div className="invalid-feedback">{errors.holderName}</div>
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label">Prima ($)</label>
-              <input 
-                type="number" 
-                name="premiumAmount"
-                className={`form-control ${errors.premiumAmount ? 'is-invalid' : ''}`}
-                placeholder="0.00"
-                value={formData.premiumAmount}
-                onChange={handleChange}
-              />
-              <div className="invalid-feedback">{errors.premiumAmount}</div>
-            </div>
-
-            <div className="col-md-2">
-              <label className="form-label">Fecha Inicio</label>
-              <input 
-                type="date" 
-                name="startDate"
-                className={`form-control ${errors.startDate ? 'is-invalid' : ''}`}
-                value={formData.startDate}
-                onChange={handleChange}
-              />
-              <div className="invalid-feedback">{errors.startDate}</div>
-            </div>
-
-            <div className="col-md-2 d-flex align-items-end">
-              <button type="submit" className="btn btn-success w-100">Guardar</button>
-            </div>
-
+          <form onSubmit={handleCreate} className="row g-3">
+             <div className="col-md-3">
+               <input type="text" name="policyNumber" className="form-control" placeholder="POL-XXXX" onChange={handleFormChange} value={formData.policyNumber}/>
+               <div className="text-danger small">{formErrors.policyNumber}</div>
+             </div>
+             <div className="col-md-3">
+               <input type="text" name="holderName" className="form-control" placeholder="Titular" onChange={handleFormChange} value={formData.holderName}/>
+               <div className="text-danger small">{formErrors.holderName}</div>
+             </div>
+             <div className="col-md-2">
+               <input type="number" name="premiumAmount" className="form-control" placeholder="Prima" onChange={handleFormChange} value={formData.premiumAmount}/>
+               <div className="text-danger small">{formErrors.premiumAmount}</div>
+             </div>
+             <div className="col-md-2">
+               <input type="date" name="startDate" className="form-control" onChange={handleFormChange} value={formData.startDate}/>
+               <div className="text-danger small">{formErrors.startDate}</div>
+             </div>
+             <div className="col-md-2">
+               <button className="btn btn-success w-100">Guardar</button>
+             </div>
           </form>
         </div>
       </div>
 
-      {/* --- TABLA DE DATOS --- */}
-      <div className="card shadow">
-        <div className="card-header bg-dark text-white">
-          Pólizas Registradas
-        </div>
-        <div className="card-body">
-          <table className="table table-hover table-striped">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Número</th>
-                <th>Titular</th>
-                <th>Prima ($)</th>
-                <th>Inicio</th>
-                <th>Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {policies.map((policy) => (
-                <tr key={policy.id}>
-                  <td>{policy.id}</td>
-                  <td>{policy.policyNumber}</td>
-                  <td>{policy.holderName}</td>
-                  <td>{policy.premiumAmount}</td>
-                  <td>{policy.startDate}</td>
-                  <td>
-                    <span className={`badge ${policy.status === 'ACTIVE' ? 'text-bg-success' : 'text-bg-warning'}`}>
-                      {policy.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <table className="table table-striped shadow-sm">
+        <thead className="table-dark">
+          <tr><th>ID</th><th>Número</th><th>Titular</th><th>Prima</th><th>Estado</th></tr>
+        </thead>
+        <tbody>
+          {policies.map(p => (
+            <tr key={p.id}>
+              <td>{p.id}</td><td>{p.policyNumber}</td><td>{p.holderName}</td><td>{p.premiumAmount}</td>
+              <td><span className="badge text-bg-success">{p.status}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
