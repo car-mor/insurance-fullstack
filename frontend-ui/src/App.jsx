@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // --- ESTADOS ---
+  const [token, setToken] = useState(localStorage.getItem("jwt_token") || ""); 
+  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem("jwt_token"));
+  
   const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState(false);
 
@@ -11,60 +14,69 @@ function App() {
   });
   const [formErrors, setFormErrors] = useState({});
 
-//   btoa(...): No es encriptación real (se puede revertir fácil), pero es el estándar para que los caracteres especiales (:, /, @) no rompan la transmisión por internet.
+  // 1. DEFINIR LOGOUT PRIMERO (Para que otros puedan usarla)
+  const logout = useCallback(() => {
+    setToken("");
+    localStorage.removeItem("jwt_token");
+    setIsLoggedIn(false);
+    setPolicies([]);
+  }, []);
 
-// Authorization: Basic ...: Es la palabra clave que Spring Security busca. Si llega una petición sin esto, responde "401 Unauthorized" (No estás autorizado).
-
-// Tomamos usuario y contraseña y los "envolvemos" en Base64 para que viajen seguros por el cable.
-  // Generar Header de Autenticación
+  // 2. HEADER HELPER
   const getAuthHeader = () => {
-    return "Basic " + btoa(`${credentials.username}:${credentials.password}`);
+    return `Bearer ${token}`; 
   };
 
-  // --- SOLUCIÓN ERROR LINT ---
-  // Definimos fetchPolicies para poder reusarlo
-  const fetchPolicies = () => {
+  // 3. CARGAR DATOS (Ahora sí 'logout' ya existe arriba)
+  const fetchPolicies = useCallback(() => {
     fetch("http://localhost:8081/api/policies", {
-      // Muestra credenciales al pedir (Fetch)
-      headers: { "Authorization": getAuthHeader() }
+      headers: { "Authorization": `Bearer ${token}` }
     })
       .then((res) => {
-        if (!res.ok) throw new Error("Error cargando datos");
+        // Si el token expiró (403) o es inválido (401), cerramos sesión
+        if (res.status === 403 || res.status === 401) {
+            logout(); 
+            return;
+        }
         return res.json();
       })
-      .then((data) => setPolicies(data))
+      .then((data) => {
+          if(data && Array.isArray(data)) setPolicies(data);
+      })
       .catch(err => console.error(err));
-  };
+  }, [token, logout]); 
 
-  // USAMOS useEffect PARA LLAMARLO AUTOMÁTICAMENTE CUANDO HAYA LOGIN
-  // Esto elimina el error "fetchPolicies is assigned but never used"
+  // 4. EFECTO DE CARGA AUTOMÁTICA
   useEffect(() => {
-    if (isLoggedIn) {
+    if (isLoggedIn && token) {
       fetchPolicies();
     }
-  }, [isLoggedIn]); // Se ejecuta cada vez que 'isLoggedIn' cambia
+  }, [isLoggedIn, token, fetchPolicies]);
 
-
-  // Manejo de Login
+  // 5. LOGIN
   const handleLogin = (e) => {
     e.preventDefault();
-    // Probamos credenciales haciendo un fetch simple
-    fetch("http://localhost:8081/api/policies", {
-      headers: { "Authorization": getAuthHeader() }
+    setLoginError(false);
+    
+    fetch("http://localhost:8081/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials)
     })
     .then(response => {
-      if (response.ok) {
-        setIsLoggedIn(true);
-        setLoginError(false);
-        // Nota: Ya no necesitamos llamar fetchPolicies() aquí manualmente
-        // porque el useEffect de arriba lo hará solito al cambiar isLoggedIn a true.
-      } else {
-        throw new Error("Credenciales inválidas");
-      }
+      if (response.ok) return response.json();
+      throw new Error("Error de autenticación");
+    })
+    .then(data => {
+      const receivedToken = data.token;
+      setToken(receivedToken);
+      localStorage.setItem("jwt_token", receivedToken);
+      setIsLoggedIn(true);
     })
     .catch(() => setLoginError(true));
   };
 
+  // 6. CREAR PÓLIZA
   const handleCreate = (e) => {
     e.preventDefault();
     setFormErrors({});
@@ -83,8 +95,7 @@ function App() {
         throw errorData; 
       })
       .then(() => {
-        // Recargamos la lista completa usando la función reutilizable
-        fetchPolicies();
+        fetchPolicies(); 
         alert("¡Creada con éxito!");
         setFormData({ policyNumber: "", holderName: "", premiumAmount: "", startDate: "" });
       })
@@ -93,7 +104,7 @@ function App() {
         if(err.policyNumber || err.holderName) {
             setFormErrors(err);
         } else {
-            alert("Error al guardar");
+            alert("Error al guardar: " + (err.message || "Desconocido"));
         }
       });
   };
@@ -101,11 +112,12 @@ function App() {
   const handleLoginChange = (e) => setCredentials({...credentials, [e.target.name]: e.target.value});
   const handleFormChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
+  // --- VISTAS ---
   if (!isLoggedIn) {
     return (
       <div className="container mt-5 d-flex justify-content-center">
         <div className="card shadow p-4" style={{ width: "400px" }}>
-          <h2 className="text-center text-primary mb-4">Iniciar Sesión</h2>
+          <h2 className="text-center text-primary mb-4">Iniciar Sesión (JWT)</h2>
           <form onSubmit={handleLogin}>
             <div className="mb-3">
               <label>Usuario</label>
@@ -116,7 +128,7 @@ function App() {
               <input type="password" name="password" className="form-control" onChange={handleLoginChange} placeholder="admin123"/>
             </div>
             {loginError && <div className="alert alert-danger">Usuario o contraseña incorrectos</div>}
-            <button className="btn btn-primary w-100">Entrar</button>
+            <button className="btn btn-primary w-100">Obtener Token</button>
           </form>
         </div>
       </div>
@@ -126,8 +138,11 @@ function App() {
   return (
     <div className="container mt-5">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h1 className="text-primary">OpenPolicy Dashboard</h1>
-        <button onClick={() => setIsLoggedIn(false)} className="btn btn-outline-danger">Salir</button>
+        <div>
+            <h1 className="text-primary">OpenPolicy Dashboard</h1>
+            <span className="badge bg-secondary">Modo Seguro: JWT Activado</span>
+        </div>
+        <button onClick={logout} className="btn btn-outline-danger">Cerrar Sesión</button>
       </div>
 
       <div className="card shadow mb-4">
