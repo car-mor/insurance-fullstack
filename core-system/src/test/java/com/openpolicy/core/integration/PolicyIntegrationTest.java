@@ -1,53 +1,76 @@
 package com.openpolicy.core.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.openpolicy.core.model.Policy;
-import com.openpolicy.core.repository.PolicyRepository;
+import com.openpolicy.core.dto.AuthResponse;
+import com.openpolicy.core.dto.LoginRequest;
+import com.openpolicy.core.dto.PolicyCreationRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-import static org.hamcrest.Matchers.hasSize;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest // ¡Esto levanta todo el contexto de Spring!
-@AutoConfigureMockMvc // Configura el cliente HTTP simulado
+@SpringBootTest
+@AutoConfigureMockMvc
 class PolicyIntegrationTest {
 
     @Autowired
-    private MockMvc mockMvc; // Nuestro "Navegador" simulado
+    private MockMvc mockMvc;
 
     @Autowired
-    private PolicyRepository policyRepository;
-
-    @Autowired
-    private ObjectMapper objectMapper; // Para convertir Objetos a JSON
+    private ObjectMapper objectMapper;
 
     @Test
-    void shouldCreateAndRetrievePolicy() throws Exception {
-        // 1. Crear una póliza nueva
-        // Usamos "POL-99999" que sí cumple el formato POL-XXXX
-        Policy newPolicy = new Policy(null, "POL-99999", "Integration User", new BigDecimal("5000"), LocalDate.now().plusDays(10), null);
-        // 2. Hacer POST a la API (Simulando Postman/Swagger)
+    void shouldCreatePolicy_WhenAuthorized() throws Exception {
+        // 1. OBTENER TOKEN (Simular Login)
+        LoginRequest loginRequest = new LoginRequest("admin", "admin123");
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        // Extraer el token del JSON de respuesta
+        String responseString = loginResult.getResponse().getContentAsString();
+        AuthResponse authResponse = objectMapper.readValue(responseString, AuthResponse.class);
+        String token = authResponse.getToken();
+
+        // 2. CREAR PÓLIZA (Usando el Token)
+        PolicyCreationRequest newPolicy = new PolicyCreationRequest();
+        newPolicy.setPolicyNumber("POL-8888");
+        newPolicy.setHolderName("Integration Tester");
+        newPolicy.setPremiumAmount(new BigDecimal("5000"));
+        newPolicy.setStartDate(LocalDate.now().plusDays(1));
+
+        mockMvc.perform(post("/api/policies")
+                        .header("Authorization", "Bearer " + token) // ¡Aquí va la magia!
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(newPolicy)))
+                .andExpect(status().isOk()) // Esperamos 200 OK
+                .andExpect(jsonPath("$.policyNumber").value("POL-8888"))
+                .andExpect(jsonPath("$.status").value("PENDING"));
+    }
+
+    @Test
+    void shouldRejectPolicy_WhenNotAuthorized() throws Exception {
+        // Intentar crear SIN token
+        PolicyCreationRequest newPolicy = new PolicyCreationRequest();
+        newPolicy.setPolicyNumber("POL-HACK");
+        // ... (llenar datos) ...
+
         mockMvc.perform(post("/api/policies")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(newPolicy)))
-                .andExpect(status().isOk()) // Esperamos HTTP 200
-                .andExpect(jsonPath("$.id").exists()); // Esperamos que devuelva un ID
-
-        // 3. Verificar que realmente se guardó en la DB (Haciendo GET)
-        // Nota: Como schema.sql ya insertó 2, más la que acabamos de crear, esperamos 3 o más.
-        mockMvc.perform(get("/api/policies"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(4))); // 2 (SQL) + 1 (Runner) + 1 (Test)
+                .andExpect(status().isForbidden()); // Esperamos 403 Forbidden
     }
 }
