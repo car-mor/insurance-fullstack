@@ -35,20 +35,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         final String jwt;
         final String username;
 
-        // 1. Validar que el header traiga el token Bearer
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // 2. Extraer el token
         jwt = authHeader.substring(7);
 
-        // 3. Extraer el usuario del token (Usando la clave secreta configurada)
-        username = jwtService.extractUsername(jwt);
+        // --- CAMBIO AQUÍ: AGREGAMOS TRY-CATCH ---
+        try {
+            username = jwtService.extractUsername(jwt);
+        } catch (Exception e) {
+            // Si el token expiró o está mal formado, ignoramos y seguimos.
+            // Al no setear la autenticación en el contexto, Spring Security
+            // rechazará la petición más adelante con un 403 limpio.
+            logger.error("Error al procesar el token JWT: " + e.getMessage());
+            filterChain.doFilter(request, response);
+            return;
+        }
+        // ----------------------------------------
 
-        // 4. Autenticar en el contexto si es válido
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            // ... (el resto de tu código sigue igual) ...
             UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
 
             if (jwtService.isTokenValid(jwt, userDetails.getUsername())) {

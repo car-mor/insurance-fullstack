@@ -48,6 +48,13 @@ public class PolicyService {
                 .collect(Collectors.toList());
     }
 
+    // Método para buscar por número de póliza
+    public PolicyResponse getPolicyByNumber(String policyNumber) {
+        return policyRepository.findByPolicyNumber(policyNumber)
+                .map(this::mapToResponse) // Si existe, conviértela a DTO
+                .orElse(null);            // Si no existe, devuelve null
+    }
+
     // Mapper auxiliar
     private PolicyResponse mapToResponse(Policy entity) {
         PolicyResponse response = new PolicyResponse();
